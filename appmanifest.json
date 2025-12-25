@@ -1,0 +1,11 @@
+{
+	"name": "Grafkalkul",
+	"short_name": "Grafkalkul",
+	"description": "Graphic Calculator",
+	"start_url": "index.html",
+	"display": "fullscreen",
+	"orientation": "landscape",
+	"background_color": "#ffffff",
+	"icons": [],
+	"screenshots": []
+}
