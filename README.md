@@ -70,3 +70,171 @@ function sdTorus(p, r1, r2) {
     const q = [Math.hypot(p[0], p[2]) - r1, p[1]];
     return Math.hypot(q[0], q[1]) - r2;
 }
+```
+#### 1. **S2. Комбинирование сцены**
+Функция mapWorld(p) возвращает минимальное расстояние до ближайшего объекта (объединение нескольких примитивов).
+
+```javascript
+function mapWorld(p) {
+    const sphere = sdSphere(p, 1.2);
+    const box = sdBox([p[0] - 2.5, p[1], p[2]], [1.5, 1.5, 1.5]);
+    const torus = sdTorus([p[0] + 2.5, p[1], p[2]], 2.0, 0.6);
+    return Math.min(sphere, box, torus);
+}
+3. Вычисление нормали
+Градиент SDF в точке – используется для освещения.
+
+javascript
+function calcNormal(p) {
+    const eps = 0.001;
+    const dx = mapWorld([p[0] + eps, p[1], p[2]]) - mapWorld([p[0] - eps, p[1], p[2]]);
+    const dy = mapWorld([p[0], p[1] + eps, p[2]]) - mapWorld([p[0], p[1] - eps, p[2]]);
+    const dz = mapWorld([p[0], p[1], p[2] + eps]) - mapWorld([p[0], p[1], p[2] - eps]);
+    const len = Math.hypot(dx, dy, dz);
+    return len > 0 ? [dx / len, dy / len, dz / len] : [0, 0, 0];
+}
+4. Освещение (Phong)
+javascript
+function phongLighting(p, viewDir, lightPos) {
+    const normal = calcNormal(p);
+    let lightDir = [
+        lightPos[0] - p[0],
+        lightPos[1] - p[1],
+        lightPos[2] - p[2]
+    ];
+    const lightDist = Math.hypot(...lightDir);
+    lightDir = lightDir.map(c => c / lightDist);
+
+    const halfDir = [
+        lightDir[0] + viewDir[0],
+        lightDir[1] + viewDir[1],
+        lightDir[2] + viewDir[2]
+    ];
+    const halfLen = Math.hypot(...halfDir);
+    const half = halfLen > 0 ? halfDir.map(c => c / halfLen) : halfDir;
+
+    const ambient = 0.2;
+    const diffuse = Math.max(0, normal[0]*lightDir[0] + normal[1]*lightDir[1] + normal[2]*lightDir[2]);
+    const specular = Math.pow(Math.max(0, normal[0]*half[0] + normal[1]*half[1] + normal[2]*half[2]), 32);
+
+    const lightColor = [1.0, 0.9, 0.8];
+    const objectColor = [0.3, 0.6, 1.0];
+
+    return [
+        objectColor[0] * (ambient + diffuse * lightColor[0]) + specular * lightColor[0],
+        objectColor[1] * (ambient + diffuse * lightColor[1]) + specular * lightColor[1],
+        objectColor[2] * (ambient + diffuse * lightColor[2]) + specular * lightColor[2]
+    ];
+}
+5. Основной цикл ray marching
+javascript
+function rayMarch(origin, direction, maxSteps = 256, maxDist = 100, epsilon = 0.001) {
+    let totalDist = 0;
+    for (let step = 0; step < maxSteps; step++) {
+        const point = [
+            origin[0] + direction[0] * totalDist,
+            origin[1] + direction[1] * totalDist,
+            origin[2] + direction[2] * totalDist
+        ];
+        const dist = mapWorld(point);
+        if (dist < epsilon) {
+            const viewDir = [-direction[0], -direction[1], -direction[2]];
+            const lightPos = [5.0, 8.0, 5.0];
+            const color = phongLighting(point, viewDir, lightPos);
+            return { hit: true, distance: totalDist, point, color };
+        }
+        totalDist += dist;
+        if (totalDist > maxDist) break;
+    }
+    // Фон – простой градиент
+    const t = Math.abs(direction[1]);
+    return { hit: false, color: [0.1 * t, 0.15 * t, 0.3 * t] };
+}
+```
+#### 1. **6. Генерация лучей камеры**
+Функция getCameraRay строит луч для каждого пикселя, исходя из параметров камеры (позиция, цель, угол обзора).
+
+#### 1. **7. Полный рендер**
+Функция renderRayMarchedScene создаёт canvas с изображением сцены, используя описанный алгоритм. В текущей версии графики этот модуль служит в первую очередь для демонстрации возможностей ray marching, а финальное изображение формируется с помощью комбинации мешей и шейдеров пост‑обработки.
+
+✨ Шейдерные эффекты свечения
+Для усиления визуальной привлекательности и подчёркивания трёхмерной формы поверхностей используются два шейдера пост‑обработки:
+
+`GlowHorizontal` – применяет размытие по горизонтали, создавая мягкое свечение, распространяющееся в стороны.
+
+`GlowVertical` – аналогичное размытие по вертикали.
+
+Оба шейдера работают на языке GLSL и выполняются непосредственно на GPU, что обеспечивает высокую производительность даже при большом количестве пикселей. Параметр intensity регулирует силу свечения, позволяя настраивать финальный вид.
+
+Фрагмент вершинного и фрагментного шейдеров (сокращённо):
+
+```glsl
+varying mediump vec2 vTex;
+uniform mediump sampler2D samplerFront;
+uniform mediump vec2 pixelSize;
+uniform mediump float intensity;
+
+void main(void) {
+    mediump vec4 sum = vec4(0.0);
+    mediump float pixelHeight = pixelSize.y;
+    // ... сбор соседних пикселей
+    mediump vec4 front = texture2D(samplerFront, vTex);
+    gl_FragColor = mix(front, max(front, sum), intensity);
+}
+```
+Комбинация горизонтального и вертикального проходов даёт равномерное свечение вокруг ярких областей изображения.
+
+🕹️ Управление
+Действие	Результат
+Зажать левую кнопку мыши и двигать	Вращение сцены по горизонтали / вертикали
+Колесо мыши	Приближение / отдаление камеры
+Кнопки на панели	Ввод символов, выбор предустановленных функций, построение графика (EXE)
+🛠️ Технологии
+Язык: JavaScript (ES6+)
+
+Графика: WebGL 1.0 / 2.0
+
+Шейдеры: GLSL (пост-обработка свечения)
+
+Стили: CSS3 (адаптивный интерфейс)
+
+Развёртывание: GitHub Pages (статический хостинг)
+
+Весь код написан вручную, без использования сторонних библиотек для рендеринга, что обеспечивает полный контроль над каждым этапом визуализации.
+
+🚀 Запуск локально
+Клонируйте репозиторий:
+
+bash
+git clone https://github.com/Occitanian/Grafkalkul.git
+Перейдите в папку проекта:
+
+bash
+cd Grafkalkul
+Запустите локальный веб-сервер (например, с помощью live-server или python -m http.server).
+
+Откройте в браузере http://localhost:8000 (или другой указанный порт).
+
+Примечание: из-за ограничений безопасности браузера (CORS, загрузка локальных файлов) рекомендуется использовать именно сервер, а не открывать index.html напрямую.
+
+📂 Структура проекта (основные файлы)
+index.html – точка входа.
+
+style.css – стили интерфейса.
+
+scripts/scriptsInEvents.js – пользовательские скрипты, включая реализацию ray marching и функцию evalExpr.
+
+scripts/main.js – основной код рантайма (сгенерирован автоматически, связывает интерфейс и логику).
+
+data.json – экспортированные данные (события, объекты, слои) – используется для инициализации сцены.
+
+images/ – спрайты для кнопок и элементов интерфейса.
+
+📜 Лицензия
+Проект распространяется под лицензией MIT. Подробнее см. файл LICENSE.
+
+<div align="center">
+Сделано с любопытством к математике и компьютерной графике
+Occitanian © 2025
+
+</div> ```
